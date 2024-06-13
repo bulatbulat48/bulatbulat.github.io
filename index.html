@@ -1,1 +1,226 @@
-"Hello World"
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>reCAPTCHA Test</title>
+    <style>
+        .d-none { display: none; }
+        .fade-text { opacity: 0.5; transition: opacity 2s; }
+    </style>
+    <script src="https://www.google.com/recaptcha/api.js" async defer></script>
+    <script src="https://unpkg.com/trusted-types/dist/es5/trusted-types.min.js"></script>
+    <script>
+        // Create a Trusted Types policy
+        const policy = trustedTypes.createPolicy('default', {
+            createHTML: (string) => string,
+            createScriptURL: (string) => string,
+            createScript: (string) => string,
+        });
+    </script>
+</head>
+<body>
+    <form id="create-widget" class="form">
+        <label>
+            Type:
+            <select name="type">
+                <option value="v3">v3</option>
+                <option value="v2-checkbox">v2 Checkbox</option>
+            </select>
+        </label>
+        <label>
+            Site Key:
+            <input type="text" name="sitekey" value="YOUR_SITE_KEY">
+        </label>
+        <label id="fast-container" class="d-none">
+            Fast:
+            <input type="checkbox" name="fast">
+        </label>
+        <button type="submit">Create Widget</button>
+    </form>
+
+    <div id="v2-checkbox-container" class="d-none"></div>
+    <div id="v3-container" class="d-none">
+        <form id="v3-form">
+            <label>
+                Action:
+                <input type="text" name="action" value="homepage">
+            </label>
+            <button type="submit">Generate Token</button>
+        </form>
+    </div>
+
+    <div id="result-container" class="d-none">
+        <p>Result:</p>
+        <pre id="result"></pre>
+    </div>
+
+    <div id="create-widget-error" class="d-none">Error loading reCAPTCHA script.</div>
+    <div id="generate-token-error" class="d-none"></div>
+
+    <script>
+        const $ = (s, e = document) => e.querySelector(s);
+        const $$ = (s, e = document) => [...e.querySelectorAll(s)];
+
+        function parseQuery(text) {
+            const search = new URLSearchParams(text);
+            const entries = search.entries();
+            return Object.fromEntries(entries);
+        }
+
+        function formatQuery(data) {
+            const search = new URLSearchParams();
+
+            for (const [key, value] of Object.entries(data)) {
+                search.set(key, value);
+            }
+
+            return search.toString();
+        }
+
+        function updateForm(form, data) {
+            for (const [key, value] of Object.entries(data)) {
+                const elem = form.elements[key];
+
+                if (elem) {
+                    elem.value = value;
+                }
+            }
+        }
+
+        function getFormData(form) {
+            const result = {};
+
+            for (const element of form.elements) {
+                if (element.name) {
+                    result[element.name] = element.value;
+                }
+            }
+
+            return result;
+        }
+
+        function sleep(ms) {
+            return new Promise(ok => setTimeout(ok, ms));
+        }
+
+        function loadScript(source) {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = policy.createScriptURL(source);
+
+                script.onload = () => resolve();
+                script.onerror = error => reject(error);
+
+                document.head.append(script);
+            });
+        }
+
+        function copyToClipboard(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+
+            document.body.appendChild(textarea);
+            textarea.focus();
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+        }
+
+        function recaptchaReady() {
+            return new Promise(ok => grecaptcha.ready(ok));
+        }
+
+        async function createCaptcha(type, sitekey) {
+            const baseUrl = 'https://www.google.com/recaptcha/api.js';
+            const query = (type === 'v3') ? { render: sitekey } : {};
+            const url = baseUrl + '?' + formatQuery(query);
+
+            const errorBox = $('#create-widget-error');
+            errorBox.classList.add('d-none');
+
+            try {
+                await loadScript(url);
+                await recaptchaReady();
+            } catch (error) {
+                errorBox.classList.remove('d-none');
+            }
+
+            if (type === 'v3') {
+                const formV3 = $('#v3-container');
+                formV3.classList.remove('d-none');
+                $('#fast-container').classList.remove('d-none');
+
+                formV3.addEventListener('submit', event => {
+                    event.preventDefault();
+                    const data = getFormData(event.target);
+                    const fast = $('input[name="fast"]').checked;
+                    v3GenerateToken(sitekey, data.action, fast);
+                });
+            } else if (type === 'v2-checkbox') {
+                const id = grecaptcha.render($('#v2-checkbox-container'), {
+                    sitekey: sitekey,
+                    theme: 'dark',  // Additional parameter
+                    size: 'compact',  // Additional parameter
+                    callback: async function(challenge) {
+                        challengeSolved(challenge);
+                        await sleep(1000);
+                        grecaptcha.reset(id);
+                    },
+                });
+                $('#v2-checkbox-container').classList.remove('d-none');
+            }
+        }
+
+        async function v3GenerateToken(sitekey, action, fast) {
+            const errorBox = $('#generate-token-error');
+            errorBox.textContent = '';
+            errorBox.classList.add('d-none');
+
+            try {
+                const token = await grecaptcha.execute(sitekey, { action, fast });
+                challengeSolved(token);
+            } catch (error) {
+                errorBox.textContent = policy.createHTML(error.message);
+                errorBox.classList.remove('d-none');
+            }
+        }
+
+        function challengeSolved(challenge) {
+            copyToClipboard(challenge);
+            $('#result-container').classList.remove('d-none');
+
+            const resultElem = $('#result');
+
+            resultElem.textContent = policy.createHTML(challenge);
+            resultElem.classList.remove('fade-text');
+
+            setTimeout(() => {
+                resultElem.classList.add('fade-text');
+            }, 2000);
+        }
+
+        document.getElementById('create-widget').addEventListener('submit', event => {
+            event.preventDefault();
+            const data = getFormData(event.target);
+            createCaptcha(data.type, data.sitekey).catch(console.error);
+        });
+
+        if (window.location.hostname === '127.0.0.1') {
+            window.location.hostname = 'localhost';
+        }
+
+        if (window.location.search) {
+            const query = parseQuery(window.location.search);
+            const allowedTypes = $$('select[name=type] option').map(it => it.value);
+
+            if (!allowedTypes.includes(query.type) || !query.sitekey) {
+                window.location.search = '';
+            } else {
+                updateForm($('#create-widget'), query);
+                createCaptcha(query.type, query.sitekey).catch(console.error);
+            }
+        }
+    </script>
+</body>
+</html>
